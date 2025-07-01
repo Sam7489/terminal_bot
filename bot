@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+from json import load, dump, JSONDecodeError
+from groq import Groq
+from dotenv import dotenv_values
+
+# Load env vars
+env = dotenv_values(".env")
+GroqAPIKey = env.get("GroqAPIKey")
+Username = env.get("Username", "Sam")
+Assistantname = env.get("Assistantname", "Bot")
+
+client = Groq(api_key=GroqAPIKey)
+
+# Path to log
+CHAT_FILE = "chatlog.json"
+
+# Your personalized system prompt
+System = f"""Hello, I am {Username}, You are a very accurate and advanced AI chatbot named {Assistantname} which also has real-time up-to-date information from the internet.
+*** Do not tell time until I ask, do not talk too much, just answer the question.***
+*** Reply in only English, even if the question is in Hindi, reply in English.***
+*** Do not provide notes in the output, just answer the question and never mention your training data. ***
+*** If the user asks for a command, reply with only the command in a code block. ***
+"""
+
+SystemChatBot = [
+    {"role": "system", "content": System}
+]
+
+# Ensure valid chatlog file
+def ensure_chat_file():
+    if not os.path.exists(CHAT_FILE):
+        with open(CHAT_FILE, "w") as f:
+            dump([], f)
+    else:
+        try:
+            with open(CHAT_FILE, "r") as f:
+                data = f.read().strip()
+                if not data:
+                    raise JSONDecodeError("Empty file", data, 0)
+                load(open(CHAT_FILE))
+        except (JSONDecodeError, FileNotFoundError):
+            with open(CHAT_FILE, "w") as f:
+                dump([], f)
+
+# Load messages
+def load_chat():
+    try:
+        with open(CHAT_FILE, "r") as f:
+            return load(f)
+    except (FileNotFoundError, JSONDecodeError):
+        return []
+
+# Save messages
+def save_chat(messages):
+    with open(CHAT_FILE, "w") as f:
+        dump(messages, f, indent=4)
+
+# Ask Groq
+def chat_with_bot(messages, prompt):
+    messages.append({"role": "user", "content": prompt})
+
+    response = client.chat.completions.create(
+        model="llama3-70b-8192",
+        messages=SystemChatBot + messages,
+        temperature=0.7,
+        max_tokens=512
+    )
+
+    reply = response.choices[0].message.content.strip()
+    messages.append({"role": "assistant", "content": reply})
+    return reply, messages
+
+# CLI interface
+def main():
+    parser = argparse.ArgumentParser(
+        description="💬 Minimal Terminal ChatBot using Groq",
+        usage="bot <your message>   OR   bot -h"
+    )
+    parser.add_argument("query", nargs="*", help="The message you want to ask the bot")
+    parser.add_argument("-new", action="store_true", help="Start a new chat and archive the old one")
+    args = parser.parse_args()
+
+    ensure_chat_file()
+
+    if args.new:
+        # Archive old chatlog
+        messages = load_chat()
+        if messages:  # only archive if not empty
+            history_file = "history.json"
+            # Create if not exists
+            if not os.path.exists(history_file):
+                with open(history_file, "w") as f:
+                    dump([], f)
+
+            # Append to history
+            with open(history_file, "r") as f:
+                history_data = load(f)
+
+            history_data.append(messages)
+
+            with open(history_file, "w") as f:
+                dump(history_data, f, indent=4)
+
+            # Clear chatlog.json
+            with open(CHAT_FILE, "w") as f:
+                dump([], f)
+
+            print("📦 Archived current chatlog to history.json and started a new session.")
+        else:
+            print("⚠️  chatlog.json is empty, nothing to archive.")
+        return
+
+    if not args.query:
+        parser.print_help()
+        return
+
+    user_input = " ".join(args.query)
+    messages = load_chat()
+
+    reply, messages = chat_with_bot(messages, user_input)
+    save_chat(messages)
+
+    print(f"\n🤖 {Assistantname}: {reply}\n")
+
+
+if __name__ == "__main__":
+    main()
